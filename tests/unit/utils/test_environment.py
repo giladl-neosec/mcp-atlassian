@@ -68,6 +68,7 @@ def _assert_authentication_logs(caplog, auth_type, services):
         "oauth": "OAuth 2.0 (3LO) authentication (Cloud)",
         "cloud_basic": "Cloud Basic Authentication (API Token)",
         "server": "Server/Data Center authentication (PAT or Basic Auth)",
+        "server_mtls": "Server/Data Center authentication (mTLS client certificate)",
         "not_configured": "is not configured or required environment variables are missing",
     }
 
@@ -132,6 +133,22 @@ class TestGetAvailableServices:
                 )
             elif scenario in ["pat_server", "basic_auth_server"]:
                 _assert_authentication_logs(caplog, "server", ["confluence", "jira"])
+
+    def test_confluence_mtls_authentication_scenario(self, caplog):
+        """Test Confluence is detected when configured with mTLS-only auth."""
+        import os
+
+        with MockEnvironment.clean_env():
+            os.environ["CONFLUENCE_URL"] = "https://confluence.example.com/confluence"
+            os.environ["CONFLUENCE_CLIENT_CERT"] = "/path/to/cert.pem"
+            os.environ["CONFLUENCE_CLIENT_KEY"] = "/path/to/key.pem"
+
+            result = get_available_services()
+            _assert_service_availability(
+                result, confluence_expected=True, jira_expected=False
+            )
+            _assert_authentication_logs(caplog, "server_mtls", ["confluence"])
+            _assert_authentication_logs(caplog, "not_configured", ["jira"])
 
     @pytest.mark.parametrize(
         "missing_oauth_var",

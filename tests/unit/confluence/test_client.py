@@ -103,6 +103,55 @@ def test_init_with_token_auth():
         )
 
 
+def test_init_with_mtls_auth_uses_effective_api_url():
+    """Test initializing the client with mTLS and a dedicated API URL."""
+    config = ConfluenceConfig(
+        url="https://confluence.example.com/confluence",
+        api_url="https://api.confluence.example.com/confluence/rest/api",
+        auth_type="mtls",
+        client_cert="/path/to/cert.pem",
+        client_key="/path/to/key.pem",
+    )
+
+    mock_session = MagicMock()
+    mock_confluence_instance = MagicMock()
+    mock_confluence_instance._session = mock_session
+
+    with (
+        patch("mcp_atlassian.confluence.client.Session") as mock_session_class,
+        patch("mcp_atlassian.confluence.client.Confluence") as mock_confluence,
+        patch(
+            "mcp_atlassian.preprocessing.confluence.ConfluencePreprocessor"
+        ) as mock_preprocessor,
+        patch(
+            "mcp_atlassian.confluence.client.configure_ssl_verification"
+        ) as mock_configure_ssl,
+    ):
+        mock_session_class.return_value = mock_session
+        mock_confluence.return_value = mock_confluence_instance
+
+        client = ConfluenceClient(config=config)
+
+        mock_confluence.assert_called_once_with(
+            url="https://api.confluence.example.com/confluence",
+            session=mock_session,
+            cloud=False,
+            verify_ssl=True,
+            timeout=75,
+        )
+        mock_configure_ssl.assert_called_once_with(
+            service_name="Confluence",
+            url="https://api.confluence.example.com/confluence",
+            session=mock_session,
+            ssl_verify=True,
+            client_cert="/path/to/cert.pem",
+            client_key="/path/to/key.pem",
+            client_key_password=None,
+        )
+        assert mock_session.trust_env is False
+        assert client.preprocessor == mock_preprocessor.return_value
+
+
 def test_init_from_env():
     """Test initializing the client from environment variables."""
     # Arrange

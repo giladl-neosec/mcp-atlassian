@@ -467,7 +467,7 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
         """
         try:
             # Build the API endpoint URL
-            base_url = self.config.url.rstrip("/")
+            base_url = self.config.effective_api_url.rstrip("/")
             url = f"{base_url}/rest/api/content/{content_id}/child/attachment"
 
             # Prepare headers (X-Atlassian-Token required for file uploads)
@@ -540,7 +540,7 @@ class AttachmentsMixin(ConfluenceClient, AttachmentsOperationsProto):
                     f"Using v1 API for token/basic authentication to delete attachment '{attachment_id}'"
                 )
                 # Use v1 API endpoint for deletion
-                base_url = self.config.url.rstrip("/")
+                base_url = self.config.effective_api_url.rstrip("/")
                 url = f"{base_url}/rest/api/content/{attachment_id}"
                 response = self.confluence._session.delete(url)
                 response.raise_for_status()

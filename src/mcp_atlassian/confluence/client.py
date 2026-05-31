@@ -32,6 +32,7 @@ class ConfluenceClient:
             MCPAtlassianAuthenticationError: If OAuth authentication fails
         """
         self.config = config or ConfluenceConfig.from_env()
+        effective_api_url = self.config.effective_api_url
 
         # Initialize the Confluence client based on auth type
         if self.config.auth_type == "oauth":
@@ -58,7 +59,7 @@ class ConfluenceClient:
 
             if is_dc_oauth:
                 # Data Center: use the instance URL directly
-                api_url = self.config.url
+                api_url = effective_api_url
                 is_cloud = False
             else:
                 # Cloud: use the Atlassian Cloud API URL
@@ -76,25 +77,43 @@ class ConfluenceClient:
         elif self.config.auth_type == "pat":
             logger.debug(
                 f"Initializing Confluence client with Token (PAT) auth. "
-                f"URL: {self.config.url}, "
+                f"URL: {effective_api_url}, "
                 f"Token (masked): {mask_sensitive(str(self.config.personal_token))}"
             )
             self.confluence = Confluence(
-                url=self.config.url,
+                url=effective_api_url,
                 token=self.config.personal_token,
                 cloud=self.config.is_cloud,
+                verify_ssl=self.config.ssl_verify,
+                timeout=self.config.timeout,
+            )
+        elif self.config.auth_type == "mtls":
+            if not self.config.client_cert or not self.config.client_key:
+                error_msg = "mTLS authentication requires client_cert and client_key"
+                raise ValueError(error_msg)
+
+            logger.debug(
+                f"Initializing Confluence client with mTLS auth. "
+                f"API URL: {effective_api_url}, "
+                f"Client cert: {self.config.client_cert}"
+            )
+            session = Session()
+            self.confluence = Confluence(
+                url=effective_api_url,
+                session=session,
+                cloud=False,
                 verify_ssl=self.config.ssl_verify,
                 timeout=self.config.timeout,
             )
         else:  # basic auth
             logger.debug(
                 f"Initializing Confluence client with Basic auth. "
-                f"URL: {self.config.url}, Username: {self.config.username}, "
+                f"URL: {effective_api_url}, Username: {self.config.username}, "
                 f"API Token present: {bool(self.config.api_token)}, "
                 f"Is Cloud: {self.config.is_cloud}"
             )
             self.confluence = Confluence(
-                url=self.config.url,
+                url=effective_api_url,
                 username=self.config.username,
                 password=self.config.api_token,  # API token is used as password
                 cloud=self.config.is_cloud,
@@ -109,13 +128,13 @@ class ConfluenceClient:
 
         # Disable trust_env for PAT and OAuth to prevent .netrc from overriding
         # explicit credentials (#860). Basic auth can safely use .netrc.
-        if self.config.auth_type in ("pat", "oauth"):
+        if self.config.auth_type in ("mtls", "pat", "oauth"):
             self.confluence._session.trust_env = False
 
         # Configure SSL verification using the shared utility
         configure_ssl_verification(
             service_name="Confluence",
-            url=self.config.url,
+            url=effective_api_url,
             session=self.confluence._session,
             ssl_verify=self.config.ssl_verify,
             client_cert=self.config.client_cert,
@@ -179,9 +198,11 @@ class ConfluenceClient:
                     "this may indicate an issue"
                 )
         except RequestsConnectionError as e:
+            connection_url = self.config.effective_api_url or self.config.url
+            url_env = "CONFLUENCE_API_URL" if self.config.api_url else "CONFLUENCE_URL"
             error_msg = (
-                f"Could not connect to Confluence at {self.config.url}. "
-                "Check that CONFLUENCE_URL is correct and the instance is reachable."
+                f"Could not connect to Confluence at {connection_url}. "
+                f"Check that {url_env} is correct and the instance is reachable."
             )
             logger.error(error_msg)
             raise MCPAtlassianAuthenticationError(error_msg) from e

@@ -108,6 +108,17 @@ def get_available_services(
             api_env="CONFLUENCE_API_TOKEN",
             pat_env="CONFLUENCE_PERSONAL_TOKEN",
         )
+        if (
+            not confluence_is_setup
+            and not is_atlassian_cloud_url(confluence_url)
+            and os.getenv("CONFLUENCE_CLIENT_CERT")
+            and os.getenv("CONFLUENCE_CLIENT_KEY")
+        ):
+            confluence_is_setup = True
+            logger.info(
+                "Using Confluence Server/Data Center authentication "
+                "(mTLS client certificate)"
+            )
 
     if not confluence_is_setup and os.getenv("ATLASSIAN_OAUTH_ENABLE", "").lower() in (
         "true",

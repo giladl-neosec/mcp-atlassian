@@ -11,7 +11,7 @@ from ..utils.oauth import (
     OAuthConfig,
     get_oauth_config_from_env,
 )
-from ..utils.urls import is_atlassian_cloud_url
+from ..utils.urls import is_atlassian_cloud_url, normalize_confluence_api_url
 
 
 @dataclass
@@ -23,12 +23,13 @@ class ConfluenceConfig:
     - Server/DC: personal access token or basic auth
     """
 
-    url: str  # Base URL for Confluence
-    auth_type: Literal["basic", "pat", "oauth"]  # Authentication type
+    url: str  # Human-facing Confluence base URL
+    auth_type: Literal["basic", "pat", "oauth", "mtls"]  # Authentication type
     username: str | None = None  # Email or username
     api_token: str | None = None  # API token used as password
     personal_token: str | None = None  # Personal access token (Server/DC)
     oauth_config: OAuthConfig | BYOAccessTokenOAuthConfig | None = None
+    api_url: str | None = None  # Optional dedicated API base URL
     ssl_verify: bool = True  # Whether to verify SSL certificates
     spaces_filter: str | None = None  # List of space keys to filter searches
     http_proxy: str | None = None  # HTTP proxy URL
@@ -79,6 +80,13 @@ class ConfluenceConfig:
         """
         return self.ssl_verify
 
+    @property
+    def effective_api_url(self) -> str:
+        """Return the URL that should be used for API requests."""
+        normalized_api_url = normalize_confluence_api_url(self.api_url)
+        normalized_url = normalize_confluence_api_url(self.url)
+        return normalized_api_url or normalized_url or ""
+
     @classmethod
     def from_env(cls) -> "ConfluenceConfig":
         """Create configuration from environment variables.
@@ -89,7 +97,8 @@ class ConfluenceConfig:
         Raises:
             ValueError: If any required environment variable is missing
         """
-        url = os.getenv("CONFLUENCE_URL")
+        url = normalize_confluence_api_url(os.getenv("CONFLUENCE_URL"))
+        api_url = normalize_confluence_api_url(os.getenv("CONFLUENCE_API_URL"))
         if not url and not os.getenv("ATLASSIAN_OAUTH_ENABLE"):
             error_msg = (
                 "Missing required CONFLUENCE_URL environment variable. "
@@ -102,6 +111,10 @@ class ConfluenceConfig:
         username = os.getenv("CONFLUENCE_USERNAME")
         api_token = os.getenv("CONFLUENCE_API_TOKEN")
         personal_token = os.getenv("CONFLUENCE_PERSONAL_TOKEN")
+        client_cert = os.getenv("CONFLUENCE_CLIENT_CERT")
+        client_key = os.getenv("CONFLUENCE_CLIENT_KEY")
+        client_key_password = os.getenv("CONFLUENCE_CLIENT_KEY_PASSWORD")
+        has_client_certificate = bool(client_cert and client_key)
 
         # Check for OAuth configuration (pass service info for DC detection)
         oauth_config = get_oauth_config_from_env(
@@ -148,14 +161,18 @@ class ConfluenceConfig:
                 auth_type = "oauth"
             elif username and api_token:
                 auth_type = "basic"
+            elif has_client_certificate:
+                auth_type = "mtls"
             else:
                 error_msg = (
                     "Server/Data Center authentication requires "
                     "CONFLUENCE_PERSONAL_TOKEN or CONFLUENCE_USERNAME and "
-                    "CONFLUENCE_API_TOKEN. "
+                    "CONFLUENCE_API_TOKEN, or CONFLUENCE_CLIENT_CERT and "
+                    "CONFLUENCE_CLIENT_KEY. "
                     "Confluence Server/Data Center authentication is incomplete. "
-                    "Set CONFLUENCE_PERSONAL_TOKEN, or set both "
-                    "CONFLUENCE_USERNAME and CONFLUENCE_API_TOKEN."
+                    "Set CONFLUENCE_PERSONAL_TOKEN, set both "
+                    "CONFLUENCE_USERNAME and CONFLUENCE_API_TOKEN, or configure "
+                    "CONFLUENCE_CLIENT_CERT and CONFLUENCE_CLIENT_KEY."
                 )
                 raise ValueError(error_msg)
 
@@ -174,11 +191,6 @@ class ConfluenceConfig:
         # Custom headers - service-specific only
         custom_headers = get_custom_headers("CONFLUENCE_CUSTOM_HEADERS")
 
-        # Client certificate settings
-        client_cert = os.getenv("CONFLUENCE_CLIENT_CERT")
-        client_key = os.getenv("CONFLUENCE_CLIENT_KEY")
-        client_key_password = os.getenv("CONFLUENCE_CLIENT_KEY_PASSWORD")
-
         # Timeout setting
         timeout = 75  # Default timeout
         if (
@@ -194,6 +206,7 @@ class ConfluenceConfig:
             api_token=api_token,
             personal_token=personal_token,
             oauth_config=oauth_config,
+            api_url=api_url,
             ssl_verify=ssl_verify,
             spaces_filter=spaces_filter,
             http_proxy=http_proxy,
@@ -260,6 +273,8 @@ class ConfluenceConfig:
             return bool(self.personal_token)
         elif self.auth_type == "basic":
             return bool(self.username and self.api_token)
+        elif self.auth_type == "mtls":
+            return bool(self.client_cert and self.client_key)
         logger.warning(
             f"Unknown or unsupported auth_type: {self.auth_type} in ConfluenceConfig"
         )

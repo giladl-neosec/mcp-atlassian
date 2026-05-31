@@ -118,6 +118,8 @@ class TestAttachmentsMixin:
 
     def test_upload_attachment_success(self, attachments_mixin: AttachmentsMixin):
         """Test successful attachment upload."""
+        attachments_mixin.config.api_url = "https://api.example.com/confluence/rest/api"
+
         # Mock the REST API call
         self._mock_rest_api_upload(attachments_mixin)
 
@@ -157,7 +159,10 @@ class TestAttachmentsMixin:
             call_args = attachments_mixin.confluence._session.put.call_args
 
             # Check URL
-            assert "/rest/api/content/123456/child/attachment" in call_args[0][0]
+            assert (
+                call_args[0][0]
+                == "https://api.example.com/confluence/rest/api/content/123456/child/attachment"
+            )
 
             # Check headers include X-Atlassian-Token
             assert call_args[1]["headers"]["X-Atlassian-Token"] == "nocheck"
@@ -1079,6 +1084,7 @@ class TestAttachmentsMixin:
         """Test successful deletion using v1 API (non-OAuth)."""
         # Ensure non-OAuth (v1 path)
         attachments_mixin.config.auth_type = "basic"
+        attachments_mixin.config.api_url = "https://api.example.com/confluence/rest/api"
 
         # Mock the session delete call
         mock_response = Mock()
@@ -1092,7 +1098,9 @@ class TestAttachmentsMixin:
         assert result["success"] is True
         assert result["attachment_id"] == "att123"
         assert "deleted successfully" in result["message"]
-        attachments_mixin.confluence._session.delete.assert_called_once()
+        attachments_mixin.confluence._session.delete.assert_called_once_with(
+            "https://api.example.com/confluence/rest/api/content/att123"
+        )
 
     def test_delete_attachment_success_v2(self, attachments_mixin: AttachmentsMixin):
         """Test successful deletion using v2 API (OAuth)."""
@@ -1194,6 +1202,7 @@ class TestDownloadAttachmentServerTool:
         mock_fetcher = MagicMock()
         mock_fetcher._v2_adapter = None
         mock_fetcher.config.url = "https://test.atlassian.net/wiki"
+        mock_fetcher.config.effective_api_url = "https://api.example.com/confluence"
 
         meta_resp = MagicMock()
         meta_resp.json.return_value = {
@@ -1221,6 +1230,9 @@ class TestDownloadAttachmentServerTool:
         assert isinstance(result, EmbeddedResource)
         assert result.resource.mimeType == "application/pdf"
         assert result.resource.blob
+        mock_fetcher.confluence._session.get.assert_called_once_with(
+            "https://api.example.com/confluence/rest/api/content/att123456"
+        )
 
     @pytest.mark.asyncio
     async def test_returns_text_on_missing_download_url(self):

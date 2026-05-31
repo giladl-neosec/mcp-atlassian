@@ -8,6 +8,7 @@ import pytest
 
 from mcp_atlassian.utils.urls import (
     is_atlassian_cloud_url,
+    normalize_confluence_api_url,
     resolve_relative_url,
     validate_url_for_ssrf,
 )
@@ -61,6 +62,35 @@ class TestResolveRelativeUrl:
     def test_resolve_relative_url(self, url: str, base_url: str, expected: str) -> None:
         """Parametrized test for resolve_relative_url."""
         assert resolve_relative_url(url, base_url) == expected
+
+
+class TestNormalizeConfluenceApiUrl:
+    """Tests for normalize_confluence_api_url."""
+
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            (
+                "https://api.confluence.example.com/confluence/rest/api",
+                "https://api.confluence.example.com/confluence",
+            ),
+            (
+                "https://api.confluence.example.com/confluence/rest/api/latest/",
+                "https://api.confluence.example.com/confluence",
+            ),
+            (
+                "https://company.atlassian.net/wiki",
+                "https://company.atlassian.net/wiki",
+            ),
+            (None, None),
+            ("", ""),
+        ],
+    )
+    def test_normalize_confluence_api_url(
+        self, url: str | None, expected: str | None
+    ) -> None:
+        """Gateway-style Confluence REST bases are normalized to client roots."""
+        assert normalize_confluence_api_url(url) == expected
 
 
 def test_is_atlassian_cloud_url_empty():
