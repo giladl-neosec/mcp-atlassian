@@ -51,6 +51,8 @@ Add to your Claude Desktop or Cursor MCP configuration:
 
 > **Server/Data Center users**: Use `JIRA_PERSONAL_TOKEN` instead of `JIRA_USERNAME` + `JIRA_API_TOKEN`. See [Authentication](https://mcp-atlassian.soomiles.com/docs/authentication) for details.
 
+> **Akamai / mTLS Confluence**: Keep `CONFLUENCE_URL` on the human-facing site URL, set `CONFLUENCE_API_URL` to the API base (`https://api.collaborate.akamai.com/confluence` or `.../rest/api`), and provide `CONFLUENCE_CLIENT_CERT` / `CONFLUENCE_CLIENT_KEY` for client-certificate auth.
+
 ### 3. Start Using
 
 Ask your AI assistant to:

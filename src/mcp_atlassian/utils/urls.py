@@ -25,6 +25,31 @@ def resolve_relative_url(url: str, base_url: str) -> str:
     return url
 
 
+def normalize_confluence_api_url(url: str | None) -> str | None:
+    """Normalize a Confluence base URL for the Atlassian Python client.
+
+    The client expects a base like ``https://host/confluence`` or
+    ``https://host/wiki`` and appends ``/rest/api`` itself. Akamai-style
+    gateways often expose ``.../rest/api`` directly, so strip that suffix when
+    present.
+
+    Args:
+        url: Candidate Confluence URL from config or environment.
+
+    Returns:
+        The normalized URL, or the original falsey value.
+    """
+    if not url:
+        return url
+
+    normalized_url = url.rstrip("/")
+    for suffix in ("/rest/api/latest", "/rest/api"):
+        if normalized_url.endswith(suffix):
+            return normalized_url[: -len(suffix)]
+
+    return normalized_url
+
+
 def is_atlassian_cloud_url(url: str) -> bool:
     """Determine if a URL belongs to Atlassian Cloud or Server/Data Center.
 

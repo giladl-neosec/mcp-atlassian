@@ -224,6 +224,49 @@ def test_from_env_with_client_cert():
         assert config.client_key_password == "secret"
 
 
+def test_from_env_with_mtls_only_auth():
+    """Test loading config with mTLS-only authentication for Server/DC."""
+    with patch.dict(
+        "os.environ",
+        {
+            "CONFLUENCE_URL": "https://collaborate.akamai.com/confluence",
+            "CONFLUENCE_CLIENT_CERT": "/path/to/cert.pem",
+            "CONFLUENCE_CLIENT_KEY": "/path/to/key.pem",
+        },
+        clear=True,
+    ):
+        config = ConfluenceConfig.from_env()
+
+        assert config.auth_type == "mtls"
+        assert config.client_cert == "/path/to/cert.pem"
+        assert config.client_key == "/path/to/key.pem"
+        assert config.effective_api_url == "https://collaborate.akamai.com/confluence"
+        assert config.is_auth_configured() is True
+
+
+def test_from_env_normalizes_confluence_api_urls():
+    """Test Akamai-style /rest/api URLs are normalized for client usage."""
+    with patch.dict(
+        "os.environ",
+        {
+            "CONFLUENCE_URL": "https://collaborate.akamai.com/confluence/rest/api",
+            "CONFLUENCE_API_URL": (
+                "https://api.collaborate.akamai.com/confluence/rest/api/latest"
+            ),
+            "CONFLUENCE_CLIENT_CERT": "/path/to/cert.pem",
+            "CONFLUENCE_CLIENT_KEY": "/path/to/key.pem",
+        },
+        clear=True,
+    ):
+        config = ConfluenceConfig.from_env()
+
+        assert config.url == "https://collaborate.akamai.com/confluence"
+        assert config.api_url == "https://api.collaborate.akamai.com/confluence"
+        assert (
+            config.effective_api_url == "https://api.collaborate.akamai.com/confluence"
+        )
+
+
 def test_from_env_without_client_cert():
     """Test loading config without client certificate settings."""
     with patch.dict(

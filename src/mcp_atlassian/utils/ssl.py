@@ -12,7 +12,55 @@ from urllib3.poolmanager import PoolManager
 logger = logging.getLogger("mcp-atlassian")
 
 
-class SSLIgnoreAdapter(HTTPAdapter):
+def _build_ssl_context(
+    ssl_verify: bool,
+    client_cert: str | None = None,
+    client_key: str | None = None,
+    client_key_password: str | None = None,
+) -> ssl.SSLContext:
+    """Create an SSL context for optional mTLS and certificate verification."""
+    context = ssl.create_default_context()
+
+    if not ssl_verify:
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+
+    if isinstance(client_cert, str) and isinstance(client_key, str):
+        context.load_cert_chain(
+            client_cert,
+            client_key,
+            password=client_key_password or None,
+        )
+
+    return context
+
+
+class SSLContextAdapter(HTTPAdapter):
+    """HTTP adapter that injects a preconfigured SSL context."""
+
+    def __init__(self, ssl_context: ssl.SSLContext) -> None:
+        self._ssl_context = ssl_context
+        super().__init__()
+
+    def init_poolmanager(
+        self, connections: int, maxsize: int, block: bool = False, **pool_kwargs: Any
+    ) -> None:
+        """Initialize the connection pool manager with the configured SSL context."""
+        self.poolmanager = PoolManager(
+            num_pools=connections,
+            maxsize=maxsize,
+            block=block,
+            ssl_context=self._ssl_context,
+            **pool_kwargs,
+        )
+
+    def proxy_manager_for(self, proxy: str, **proxy_kwargs: Any) -> Any:
+        """Ensure proxied HTTPS requests reuse the configured SSL context."""
+        proxy_kwargs["ssl_context"] = self._ssl_context
+        return super().proxy_manager_for(proxy, **proxy_kwargs)
+
+
+class SSLIgnoreAdapter(SSLContextAdapter):
     """HTTP adapter that ignores SSL verification.
 
     A custom transport adapter that disables SSL certificate verification for specific domains.
@@ -22,32 +70,8 @@ class SSLIgnoreAdapter(HTTPAdapter):
     Note that this reduces security and should only be used when absolutely necessary.
     """
 
-    def init_poolmanager(
-        self, connections: int, maxsize: int, block: bool = False, **pool_kwargs: Any
-    ) -> None:
-        """Initialize the connection pool manager with SSL verification disabled.
-
-        This method is called when the adapter is created, and it's the proper place to
-        disable SSL verification completely.
-
-        Args:
-            connections: Number of connections to save in the pool
-            maxsize: Maximum number of connections in the pool
-            block: Whether to block when the pool is full
-            pool_kwargs: Additional arguments for the pool manager
-        """
-        # Configure SSL context to disable verification completely
-        context = ssl.create_default_context()
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
-
-        self.poolmanager = PoolManager(
-            num_pools=connections,
-            maxsize=maxsize,
-            block=block,
-            ssl_context=context,
-            **pool_kwargs,
-        )
+    def __init__(self) -> None:
+        super().__init__(_build_ssl_context(ssl_verify=False))
 
     def cert_verify(self, conn: Any, url: str, verify: bool, cert: Any | None) -> None:
         """Override cert verification to disable SSL verification.
@@ -62,6 +86,31 @@ class SSLIgnoreAdapter(HTTPAdapter):
             cert: Client certificate path
         """
         super().cert_verify(conn, url, verify=False, cert=cert)
+
+
+class MutualTLSAdapter(SSLContextAdapter):
+    """HTTP adapter that configures client-certificate authentication."""
+
+    def __init__(
+        self,
+        client_cert: str,
+        client_key: str,
+        client_key_password: str | None = None,
+        ssl_verify: bool = True,
+    ) -> None:
+        self._ssl_verify = ssl_verify
+        super().__init__(
+            _build_ssl_context(
+                ssl_verify=ssl_verify,
+                client_cert=client_cert,
+                client_key=client_key,
+                client_key_password=client_key_password,
+            )
+        )
+
+    def cert_verify(self, conn: Any, url: str, verify: bool, cert: Any | None) -> None:
+        """Run requests-level certificate verification with the configured mode."""
+        super().cert_verify(conn, url, verify=self._ssl_verify, cert=cert)
 
 
 def configure_ssl_verification(
@@ -91,32 +140,46 @@ def configure_ssl_verification(
         client_key: Path to client private key file (.pem)
         client_key_password: Password for encrypted private key (optional)
     """
-    # Configure client certificate if provided (must be actual string paths)
-    if isinstance(client_cert, str) and isinstance(client_key, str):
-        # Encrypted private keys are not supported by the requests library
-        if isinstance(client_key_password, str) and client_key_password:
-            raise ValueError(
-                f"{service_name} client certificate authentication with encrypted "
-                "private keys is not supported. Please decrypt your private key first "
-                "(e.g., using 'openssl rsa -in encrypted.key -out decrypted.key')."
-            )
+    has_client_cert = isinstance(client_cert, str) and isinstance(client_key, str)
+    if ssl_verify and not has_client_cert:
+        return
 
-        # Set the client certificate on the session
-        session.cert = (client_cert, client_key)
+    if not isinstance(url, str):
+        return
+
+    domain = urlparse(url).netloc
+    if not domain:
+        return
+
+    mount_prefixes = (f"https://{domain}", f"http://{domain}")
+
+    if has_client_cert:
+        adapter = MutualTLSAdapter(
+            client_cert=client_cert,
+            client_key=client_key,
+            client_key_password=client_key_password,
+            ssl_verify=ssl_verify,
+        )
+        for prefix in mount_prefixes:
+            session.mount(prefix, adapter)
+
         logger.info(
             f"{service_name} client certificate authentication configured "
             f"with cert: {client_cert}"
         )
+
+        if not ssl_verify:
+            logger.warning(
+                f"{service_name} SSL verification disabled. This is insecure and "
+                "should only be used in testing environments."
+            )
+        return
 
     if not ssl_verify:
         logger.warning(
             f"{service_name} SSL verification disabled. This is insecure and should only be used in testing environments."
         )
 
-        # Get the domain from the configured URL
-        domain = urlparse(url).netloc
-
-        # Mount the adapter to handle requests to this domain
         adapter = SSLIgnoreAdapter()
-        session.mount(f"https://{domain}", adapter)
-        session.mount(f"http://{domain}", adapter)
+        for prefix in mount_prefixes:
+            session.mount(prefix, adapter)
